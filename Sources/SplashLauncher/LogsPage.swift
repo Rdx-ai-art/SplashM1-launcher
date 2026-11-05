@@ -31,12 +31,12 @@ struct LogsPage: View {
                         Color.clear.frame(height: 1).id(logEndID)
                     }
                 }
-                .onAppear { proxy.scrollTo(logEndID, anchor: .bottom) }
+                .onAppear { proxy.scrollTo(logEndID, anchor: .bottomLeading) }
                 .onChange(of: controller.logs) {
-                    if followLogs { proxy.scrollTo(logEndID, anchor: .bottom) }
+                    if followLogs { proxy.scrollTo(logEndID, anchor: .bottomLeading) }
                 }
                 .onChange(of: followLogs) {
-                    if followLogs { proxy.scrollTo(logEndID, anchor: .bottom) }
+                    if followLogs { proxy.scrollTo(logEndID, anchor: .bottomLeading) }
                 }
             }
             .frame(minHeight: 240, maxHeight: .infinity)

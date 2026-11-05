@@ -8,6 +8,56 @@ struct SettingsPage: View {
     @State private var modelStorage: SplashModelStorage?
     @State private var useCustomModel = false
     @State private var keyDraft = ""
+    @State private var customFlagsHelp = false
+    @State private var customFlagsText: String = ""
+    @State private var localModelId: String = ""
+    @State private var localModelDir: String = ""
+    @State private var localDraftModel: String = ""
+    @State private var localMmproj: String = ""
+    @State private var preparerState: SplashModelPreparer.State = .idle
+    @State private var preparerOutput: String = ""
+    @State private var showingPrepareProgress = false
+    @State private var isPreparing = false
+    @State private var confirmingDelete: SplashModelStorage.Model?
+    @State private var showingDeleteConfirm = false
+
+    private var localModelReady: Bool {
+        !localModelDir.isEmpty && FileManager.default.fileExists(atPath: localModelDir)
+    }
+
+    private struct FlagInfo: Identifiable, Equatable {
+        let id = UUID()
+        let option: String
+        let value: String
+    }
+
+    private var unmanagedFlags: [FlagInfo] {
+        [
+            FlagInfo(option: "--allow-idle-sleep", value: "Allow system sleep"),
+            FlagInfo(option: "--allowed-host", value: "Extra HTTP Host names (repeatable)"),
+            FlagInfo(option: "--allowed-origin", value: "Browser origins (repeatable)"),
+            FlagInfo(option: "--announce-served-name", value: "Report alias in responses"),
+            FlagInfo(option: "--cache-dir", value: "Persistent cache path"),
+            FlagInfo(option: "--decode-share", value: "Decode time ratio"),
+            FlagInfo(option: "--disable-ane", value: "GPU-only prefill"),
+            FlagInfo(option: "--draft-model", value: "Alternative DFlash2 draft"),
+            FlagInfo(option: "--expert-memory", value: "Expert cache size"),
+            FlagInfo(option: "--language-only", value: "Skip vision"),
+            FlagInfo(option: "--max-cache-disk-writes", value: "Daily write budget"),
+            FlagInfo(option: "--max-image-pixels", value: "Max pixels after resize (e.g. 4194304)"),
+            FlagInfo(option: "--max-request-size", value: "Largest HTTP request body (e.g. 128MB)"),
+            FlagInfo(option: "--model-dir", value: "Local GGUF/MLX directory"),
+            FlagInfo(option: "--mmproj", value: "Vision projector GGUF"),
+            FlagInfo(option: "--offline", value: "No Hub check"),
+            FlagInfo(option: "--ple-memory", value: "PLE table memory"),
+            FlagInfo(option: "--queue-size", value: "Concurrent request limit"),
+            FlagInfo(option: "--revision", value: "Branch, tag, or commit"),
+            FlagInfo(option: "--sparse-kv-memory", value: "SSD KV block memory"),
+            FlagInfo(option: "--state-format", value: "fp32 | bf16"),
+            FlagInfo(option: "--thinking-end-text", value: "End-of-thinking marker"),
+            FlagInfo(option: "--verify-rows", value: "auto | all"),
+        ]
+    }
 
     private var aliases: Binding<String> {
         Binding(
@@ -84,6 +134,167 @@ struct SettingsPage: View {
                 }
             }
 
+            Panel("Local Model Preparation", symbol: "folder.badge.plus") {
+                if controller.state.isRunning {
+                    Notice("Stop Splash to prepare a local model. Changes apply on the next start.", symbol: "lock")
+                }
+                
+                // Model ID
+                SettingLabel("Model ID",
+                             helpText: "A short name for this model as it appears in the launcher and API. Default is extracted from the file name.")
+                TextField("e.g. local/mymodel", text: $localModelId)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isLocked)
+                
+                // Local model
+                SettingLabel("Local model",
+                             helpText: "A GGUF file (.gguf) or a model folder containing the model weights.")
+                HStack(spacing: 8) {
+                    Button("Choose…") { chooseLocalModel() }
+                        .disabled(isLocked)
+                    if localModelDir.isEmpty {
+                        Text("No model selected")
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        let info = localModelInfo()
+                        Text("\(info.name)  (\(info.size))")
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(info.path)
+                    }
+                }
+                
+                // Draft model
+                SettingLabel("Draft model",
+                             helpText: "Leave blank for Splash to download the supported/compatible draft model.")
+                HStack(spacing: 8) {
+                    Button("Choose…") { chooseDraftModel() }
+                        .disabled(isLocked)
+                    if localDraftModel.isEmpty {
+                        Text("Auto (Splash will download a compatible draft)")
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(localDraftModel)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(localDraftModel)
+                    }
+                }
+                
+                // Vision projector
+                SettingLabel("Vision projector (mmproj)",
+                             helpText: "Optional: a GGUF vision projector file for multimodal support. Only needed for GGUF models.")
+                HStack(spacing: 8) {
+                    Button("Choose…") { chooseMmproj() }
+                        .disabled(isLocked)
+                    if localMmproj.isEmpty {
+                        Text("None")
+                            .foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(localMmproj)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(localMmproj)
+                    }
+                }
+                if !preparerState.isFinal {
+                    if case .preparing(let progress) = preparerState {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                ProgressView(value: progress)
+                                    .frame(width: 200)
+                                Text("\(Int(progress * 100))%")
+                                    .font(.callout).monospacedDigit()
+                            }
+                            Text("Preparing model… Splash will download and prepare the weights.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            Button("Stop") {
+                                isPreparing = false
+                                preparerState = .idle
+                                preparerOutput = ""
+                            }
+                        }
+                    }
+                } else if preparerState.isFinal {
+                    switch preparerState {
+                    case .ready(let modelId):
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Model \(modelId) is ready.").font(.callout.weight(.medium))
+                            }
+                            Text("The model has been prepared and can now be selected and started.")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if !preparerOutput.isEmpty {
+                                Text(preparerOutput.prefix(200) + (preparerOutput.count > 200 ? "…" : ""))
+                                    .font(.caption).monospaced().foregroundStyle(.tertiary)
+                            }
+                            HStack {
+                                Button("Save & add to models list") {
+                                    controller.configuration.localModelId = modelId
+                                    controller.configuration.localModelDir = localModelDir
+                                    controller.configuration.localDraftModel = localDraftModel
+                                    controller.configuration.localMmproj = localMmproj
+                                    controller.configuration.model = modelId
+                                    refreshModels()
+                                    preparerState = .idle
+                                    preparerOutput = ""
+                                }
+                                .buttonStyle(.borderedProminent)
+                                Button("Start Splash with this model") {
+                                    controller.configuration.localModelId = modelId
+                                    controller.configuration.localModelDir = localModelDir
+                                    controller.configuration.localDraftModel = localDraftModel
+                                    controller.configuration.localMmproj = localMmproj
+                                    preparerState = .idle
+                                    preparerOutput = ""
+                                    controller.start()
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(SplashTheme.accent)
+                                Button("Discard") {
+                                    preparerState = .idle
+                                    preparerOutput = ""
+                                }
+                                .buttonStyle(.link)
+                            }
+                        }
+                    case .failed(let message):
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.red)
+                                Text("Preparation failed").font(.callout.weight(.medium))
+                            }
+                            Text(message).font(.caption).foregroundStyle(.red)
+                            Button("Try again") {
+                                preparerState = .idle
+                                preparerOutput = ""
+                            }
+                                .buttonStyle(.link)
+                        }
+                    default:
+                        EmptyView()
+                    }
+                } else {
+                    Button("Prepare model") {
+                        prepareLocalModel()
+                    }
+                    .disabled(!localModelReady || isLocked || isPreparing)
+                }
+            }
+
+            Panel("Model cache", symbol: "internaldrive") {
+                cachePanel
+            }
+
             Panel("Server settings", symbol: "slider.horizontal.3") {
                 field("Model aliases", text: aliases,
                              prompt: "Comma-separated names", defaultValue: "None",
@@ -122,15 +333,27 @@ struct SettingsPage: View {
                 field("Maximum context (tokens)", text: $controller.configuration.maxContext,
                              prompt: "e.g. 128K", defaultValue: "Automatic when blank",
                              helpText: "Limits the number of tokens in one request's context. 128K means 131,072 tokens. Blank lets Splash choose within the memory budget.")
-                field("Additional allowed hosts", text: allowedHosts,
-                             prompt: "Comma-separated hosts", defaultValue: "None",
-                             helpText: "Extra HTTP Host names the server accepts. This does not change which network address Splash listens on.")
-                field("Maximum request size", text: $controller.configuration.maxRequestSize,
-                             prompt: "e.g. 128MB", defaultValue: "128MB when blank",
-                             helpText: "Largest HTTP request body Splash accepts, including text and images. Splash treats MB as 1,024 squared bytes.")
-                field("Maximum image pixels", text: $controller.configuration.maxImagePixels,
-                             prompt: "e.g. 1048576", defaultValue: "4,194,304 pixels when blank",
-                             helpText: "Maximum number of pixels in an image after Splash resizes it for processing. A lower limit can reduce image detail and memory use.")
+                field("Idle release", text: $controller.configuration.idleRelease,
+                             prompt: "e.g. 2m", defaultValue: "Automatic when blank",
+                             helpText: "How long Splash stays loaded after the last request before releasing the model. e.g. 2m, 30s, 1h.")
+                field("Max cache disk", text: $controller.configuration.maxCacheDisk,
+                             prompt: "e.g. 16G", defaultValue: "Auto (up to 32 GiB); 0 turns it off",
+                             helpText: "Maximum disk space for Splash's SSD/KV cache. e.g. 16G, 32G. Set 0 to disable disk caching.")
+                HStack {
+                    SettingLabel("Persistent cache", defaultValue: "Off",
+                                 helpText: "Keep the KV cache on disk across Splash restarts instead of clearing it on exit.")
+                    Toggle("", isOn: $controller.configuration.persistentCache)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .accessibilityLabel("Persistent cache")
+                        .disabled(controller.state.isRunning)
+                }
+                field("Thinking token budget", text: $controller.configuration.thinkingTokenBudget,
+                             prompt: "e.g. 4096", defaultValue: "Model default when blank",
+                             helpText: "Maximum tokens the model may spend on thinking/reasoning per request.")
+                field("Request timeout", text: $controller.configuration.requestTimeout,
+                             prompt: "e.g. 120s", defaultValue: "Automatic when blank",
+                             helpText: "Maximum time to wait for a request to complete before timing out. e.g. 120s, 5m.")
                 HStack {
                     SettingLabel("Disable web UI", defaultValue: "Web UI enabled",
                                  helpText: "Hides Splash's built-in browser chat page. The API remains available.")
@@ -139,6 +362,64 @@ struct SettingsPage: View {
                         .labelsHidden()
                         .accessibilityLabel("Disable web UI")
                         .disabled(controller.state.isRunning)
+                }
+            }
+
+            Panel("Additional/Custom Flags", symbol: "wrench.and.screwdriver") {
+                if controller.state.isRunning {
+                    Notice("Stop Splash to edit custom flags. Changes apply on the next start.", symbol: "lock")
+                }
+                SettingLabel("Additional arguments",
+                             helpText: "Extra arguments passed directly to Splash on startup. Enter each flag and its value on its own line (e.g. \"--idle-release off\"). Tap a flag below to add it here. Only flags that the launcher does not already manage are listed below; use those instead when possible.")
+                TextEditor(text: $customFlagsText)
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(minHeight: 50, maxHeight: 120)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(isLocked)
+                    .accessibilityLabel("Additional server flags")
+                    .onChange(of: customFlagsText) {
+                        controller.configuration.customFlags = customFlagsText.split(separator: "\n", omittingEmptySubsequences: false).map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    }
+                    .onAppear {
+                        customFlagsText = controller.configuration.customFlags.joined(separator: "\n")
+                    }
+                    .submitLabel(.done)
+                Button("Show all available flags") { customFlagsHelp.toggle() }
+                    .buttonStyle(.link)
+                    .help("View the complete list of Splash serve options.")
+                .popover(isPresented: $customFlagsHelp, arrowEdge: .trailing) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Tap a flag to add it to your custom arguments:")
+                                .font(.caption).foregroundStyle(.secondary)
+                            ForEach(unmanagedFlags, id: \.option) { f in
+                                Button {
+                                    let insertion = "\n\(f.option)"
+                                    // Insert at cursor or end
+                                    var text = customFlagsText
+                                    if text.hasSuffix("\n") || text.isEmpty {
+                                        text = text + insertion
+                                    } else {
+                                        text = text + "\n" + insertion
+                                    }
+                                    customFlagsText = text
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text(f.option).font(.callout.monospaced())
+                                        Text(f.value).font(.caption).foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                    .padding(6)
+                                    .background(SplashTheme.inset, in: RoundedRectangle(cornerRadius: 6))
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .buttonBorderShape(.roundedRectangle)
+                            }
+                        }
+                        .padding(12)
+                        .frame(width: 480, alignment: .leading)
+                    }
                 }
             }
 
@@ -175,6 +456,145 @@ struct SettingsPage: View {
         Task {
             let storage = await Task.detached(priority: .utility) { SplashModelStorage.scan() }.value
             modelStorage = storage
+        }
+        refreshCacheSizes()
+    }
+
+    // MARK: - Model Cache
+
+    @ViewBuilder
+    private var cachePanel: some View {
+        Group {
+            SettingLabel("Models and Cache (SSD, persistent) size", helpText: "Installed models, their on-disk footprint, and SSD KV cache usage.")
+            
+            if modelStorage?.models.isEmpty == true {
+                Text("No models found.").foregroundStyle(.secondary)
+            } else {
+                ForEach(modelStorage?.models ?? []) { entry in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(entry.id)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(entry.locations.first?.path ?? "—")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: entry.bytes, countStyle: .file))
+                            .foregroundStyle(.secondary)
+                        Button("Delete", role: .destructive) {
+                            confirmingDelete = entry
+                            showingDeleteConfirm = true
+                        }
+                        .font(.caption)
+                        .disabled(isLocked)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            
+            // SSD KV cache
+            if let ssdPath = modelStorage?.ssdCachePath, modelStorage?.ssdCacheBytes ?? 0 > 0 {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("SSD KV cache")
+                            .lineLimit(1)
+                        Text(ssdPath)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Text(ByteCountFormatter.string(fromByteCount: modelStorage!.ssdCacheBytes, countStyle: .file))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+                .padding(.top, 8)
+            }
+            
+            // Persistent KV cache
+            if let persistPath = modelStorage?.persistentCachePath, modelStorage?.persistentCacheBytes ?? 0 > 0 {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text("Persistent KV cache")
+                            .lineLimit(1)
+                        Text(persistPath)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                    Spacer()
+                    Text(ByteCountFormatter.string(fromByteCount: modelStorage!.persistentCacheBytes, countStyle: .file))
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 2)
+                .padding(.top, 4)
+            }
+        }
+        .confirmationDialog(
+            confirmingDelete.map { "Delete \($0.id)?" } ?? "Delete model?",
+            isPresented: $showingDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let entry = confirmingDelete {
+                    deleteModel(entry)
+                }
+                confirmingDelete = nil
+            }
+            Button("Cancel", role: .cancel) {
+                confirmingDelete = nil
+            }
+        } message: {
+            Text("This will remove the model and its source files. This action cannot be undone.")
+        }
+    }
+    
+    private func refreshCacheSizes() {
+        // modelStorage is already populated by refreshModels()
+    }
+    
+    private func deleteModel(_ entry: SplashModelStorage.Model) {
+        Task {
+            let fm = FileManager.default
+            let modelsRoot = SplashModelDiscovery.directory
+            
+            if entry.id.hasPrefix("local/") {
+                // Local model: remove .selections symlink, .resolved dir, and source files
+                let selectionsDir = modelsRoot.appendingPathComponent(".selections")
+                let selections = (try? fm.contentsOfDirectory(at: selectionsDir, includingPropertiesForKeys: nil)) ?? []
+                for selection in selections {
+                    let resolved = (try? selection.resolvingSymlinksInPath()) ?? selection
+                    let modelJSON = resolved.appendingPathComponent("model.json")
+                    if let data = try? String(contentsOf: modelJSON, encoding: .utf8),
+                       let json = try? JSONSerialization.jsonObject(with: data.data(using: .utf8)!, options: []),
+                       let dict = json as? [String: Any],
+                       let family = dict["family"] as? String,
+                       "local/\(family)" == entry.id {
+                        // Remove the selection symlink
+                        try? fm.removeItem(at: selection)
+                        // Remove the resolved directory
+                        try? fm.removeItem(at: resolved)
+                        // Remove the source files
+                        if let sourcePath = SplashModelDiscovery.resolvedDirectories[entry.id] {
+                            try? fm.removeItem(atPath: sourcePath)
+                        }
+                        break
+                    }
+                }
+            } else {
+                // Owner/repo model: remove from models directory
+                let modelPath = modelsRoot.appendingPathComponent(entry.id)
+                try? fm.removeItem(at: modelPath)
+            }
+            
+            // Refresh the model list
+            refreshModels()
         }
     }
 
@@ -259,5 +679,105 @@ struct SettingsPage: View {
                        defaultValue: String, helpText: String) -> some View {
         SettingField(title, text: text, prompt: prompt, defaultValue: defaultValue,
                      helpText: helpText, isLocked: isLocked)
+    }
+
+    // MARK: - File pickers
+
+    private func chooseLocalModel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            localModelDir = url.path
+            if localModelId.isEmpty {
+                let name = url.lastPathComponent
+                localModelId = "local/\(name)"
+            }
+        }
+    }
+
+    private func chooseDraftModel() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            localDraftModel = url.path
+        }
+    }
+
+    private func chooseMmproj() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.plainText, .item]
+        panel.prompt = "Choose"
+        if panel.runModal() == .OK, let url = panel.url {
+            localMmproj = url.path
+        }
+    }
+
+    private struct LocalModelInfo {
+        let name: String
+        let path: String
+        let size: String
+    }
+
+    private func localModelInfo() -> LocalModelInfo {
+        let url = URL(fileURLWithPath: localModelDir)
+        var totalSize: Int64 = 0
+        func walk(_ path: URL) {
+            guard let enumerator = FileManager.default.enumerator(at: path, includingPropertiesForKeys: [.fileSizeKey]) else { return }
+            for case let file as URL in enumerator {
+                guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                      values.isRegularFile == true else { continue }
+                totalSize += Int64(values.fileSize ?? 0)
+            }
+        }
+        walk(url)
+        return LocalModelInfo(
+            name: url.lastPathComponent,
+            path: localModelDir,
+            size: ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file)
+        )
+    }
+
+    private func prepareLocalModel() {
+        isPreparing = true
+        preparerState = .preparing(progress: 0)
+        preparerOutput = ""
+
+        Task {
+            let preparer = SplashModelPreparer()
+            preparer.port = 8002
+            preparer.executablePath = controller.executable?.path ?? "splash-m1"  // Use a different port to avoid conflicts
+
+            let modelId = localModelId.isEmpty ? "local/default" : localModelId
+
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask {
+                    await preparer.prepare(
+                        modelId: modelId,
+                        modelDirectory: localModelDir,
+                        draftModel: localDraftModel.isEmpty ? nil : localDraftModel,
+                        mmproj: localMmproj.isEmpty ? nil : localMmproj,
+                        maxMemory: nil
+                    ) { line in
+                        Task { @MainActor in
+                            preparerOutput += line + "\n"
+                        }
+                    }
+                }
+            }
+
+            await MainActor.run {
+                isPreparing = false
+                preparerState = preparer.state
+            }
+        }
     }
 }

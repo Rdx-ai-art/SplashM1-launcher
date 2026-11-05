@@ -25,6 +25,14 @@ struct SplashModelStorage: Equatable {
     /// Cache entries converted from models that are no longer installed. Splash doesn't
     /// remove these when a model is deleted.
     let orphanedPreparedBytes: Int64
+    /// SSD KV cache size (temp, exists only while Splash is running).
+    let ssdCacheBytes: Int64
+    /// Where the SSD KV cache lives, if present.
+    let ssdCachePath: String?
+    /// Persistent KV cache size (when --persistent-cache is enabled).
+    let persistentCacheBytes: Int64
+    /// Where the persistent KV cache lives, if present.
+    let persistentCachePath: String?
 
     static var preparedCacheDirectory: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -34,15 +42,33 @@ struct SplashModelStorage: Equatable {
     static func scan(modelsRoot: URL = SplashModelDiscovery.directory,
                      preparedCache: URL = preparedCacheDirectory) -> SplashModelStorage {
         let ids = SplashModelDiscovery.installedModels(in: modelsRoot)
-        let filesByModel = Dictionary(uniqueKeysWithValues: ids.map {
-            ($0, realFiles(under: modelsRoot.appendingPathComponent($0)))
+        
+        // Resolve model paths: local models use their source directory, others use modelsRoot
+        func modelPath(for id: String) -> URL? {
+            if id.hasPrefix("local/") {
+                // Local model: use the resolved source directory
+                guard let sourcePath = SplashModelDiscovery.resolvedDirectories[id] else { return nil }
+                return URL(fileURLWithPath: sourcePath)
+            } else if id.hasPrefix("/") {
+                return URL(fileURLWithPath: id)
+            } else {
+                return modelsRoot.appendingPathComponent(id)
+            }
+        }
+        
+        let filesByModel = Dictionary(uniqueKeysWithValues: ids.compactMap { id -> (String, [String: RealFile])? in
+            guard let path = modelPath(for: id) else { return nil }
+            return (id, realFiles(under: path))
         })
         var users: [String: Int] = [:]
         for files in filesByModel.values { for path in files.keys { users[path, default: 0] += 1 } }
         func size(_ files: [String: RealFile]) -> Int64 { files.values.reduce(0) { $0 + $1.bytes } }
 
         // Each cache entry records the model file it was converted from.
-        let modelRoots = ids.map { id in (id, modelsRoot.appendingPathComponent(id).resolvingSymlinksInPath().path + "/") }
+        let modelRoots = ids.compactMap { id -> (String, String)? in
+            guard let path = modelPath(for: id) else { return nil }
+            return (id, path.resolvingSymlinksInPath().path + "/")
+        }
         var preparedByModel: [String: Int64] = [:]
         var orphanedPrepared: Int64 = 0
         for entry in preparedEntries(in: preparedCache) {
@@ -70,7 +96,57 @@ struct SplashModelStorage: Equatable {
         }
         return SplashModelStorage(models: models,
                                   preparedCacheBytes: size(realFiles(under: preparedCache)),
-                                  orphanedPreparedBytes: orphanedPrepared)
+                                  orphanedPreparedBytes: orphanedPrepared,
+                                  ssdCacheBytes: ssdCacheSize,
+                                  ssdCachePath: ssdCacheDir?.path,
+                                  persistentCacheBytes: persistentCacheSize,
+                                  persistentCachePath: persistentCacheDir?.path)
+    }
+
+    /// Default persistent cache location: ~/Library/Caches/Splash/prefix-cache/
+    private static var defaultPersistentCacheDir: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Caches/Splash/prefix-cache", isDirectory: true)
+    }
+
+    private static var persistentCacheSize: Int64 {
+        let dir = defaultPersistentCacheDir
+        guard FileManager.default.fileExists(atPath: dir.path) else { return 0 }
+        return realFiles(under: dir).values.reduce(0) { $0 + $1.bytes }
+    }
+
+    private static var persistentCacheDir: URL? {
+        let dir = defaultPersistentCacheDir
+        guard FileManager.default.fileExists(atPath: dir.path) else { return nil }
+        return dir
+    }
+
+    /// Scan the user's temp directory for Splash SSD KV cache files.
+    /// Splash creates temp files in NSTemporaryDirectory() while running.
+    private static var ssdCacheSize: Int64 {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        var total: Int64 = 0
+        guard let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else { return 0 }
+        for case let file as URL in enumerator {
+            let name = file.lastPathComponent.lowercased()
+            guard name.contains("splash") || name.contains("kv") || name.contains("ssd") else { continue }
+            guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  values.isRegularFile == true else { continue }
+            total += Int64(values.fileSize ?? 0)
+        }
+        return total
+    }
+
+    private static var ssdCacheDir: URL? {
+        let tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+        guard let enumerator = FileManager.default.enumerator(at: tempDir, includingPropertiesForKeys: nil) else { return nil }
+        for case let file as URL in enumerator {
+            let name = file.lastPathComponent.lowercased()
+            if name.contains("splash") || name.contains("kv") || name.contains("ssd") {
+                return tempDir
+            }
+        }
+        return nil
     }
 
     struct PreparedEntry: Equatable {

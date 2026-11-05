@@ -49,6 +49,7 @@ final class SplashProcessController: ObservableObject {
     @Published private(set) var hasAPIKey = false
     @Published private(set) var keyErrorMessage: String?
     @Published private(set) var executable: SplashExecutable?
+    @Published private(set) var serverVersion: String?
     @Published var configuration: SplashConfiguration {
         didSet {
             if oldValue.model != configuration.model { configuration.normalizeReasoningEffort() }
@@ -105,6 +106,7 @@ final class SplashProcessController: ObservableObject {
         self.settingsStore = settingsStore
         if normalized != configuration { settingsStore?.saveConfiguration(normalized) }
         self.hasAPIKey = (try? keyStore.read()) != nil
+        self.probeServerVersion()
     }
 
     var hasExecutable: Bool { executable != nil }
@@ -133,6 +135,7 @@ final class SplashProcessController: ObservableObject {
         executable = SplashExecutable(path: path)
         settingsStore?.saveExecutablePath(path)
         launchErrorMessage = nil
+        probeServerVersion()
     }
 
     func saveAPIKey(_ key: String) {
@@ -381,5 +384,28 @@ final class SplashProcessController: ObservableObject {
         shutdownTimer?.invalidate()
         statusRequest?.cancel()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
+    }
+
+    /// Runs `splash --version` on the discovered executable to identify the server version.
+    func probeServerVersion() {
+        guard let executablePath = executable?.path else { return }
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: executablePath)
+        task.arguments = ["--version"]
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        do {
+            try task.run()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            task.waitUntilExit()
+            if let text = String(data: data, encoding: .utf8),
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                DispatchQueue.main.async {
+                    self.serverVersion = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+            }
+        } catch {
+            // Non-fatal: Splash may not support --version on older builds.
+        }
     }
 }

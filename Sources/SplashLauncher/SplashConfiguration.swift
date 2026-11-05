@@ -13,6 +13,20 @@ struct SplashConfiguration: Codable, Equatable {
     var maxRequestSize: String = ""
     var maxImagePixels: String = ""
     var noWebUI: Bool = false
+    var customFlags: [String] = []
+
+    // Server performance flags
+    var idleRelease: String = ""
+    var maxCacheDisk: String = ""
+    var persistentCache: Bool = false
+    var thinkingTokenBudget: String = ""
+    var requestTimeout: String = ""
+
+    // Local model settings (Splash 1.5.0+)
+    var localModelId: String = ""
+    var localModelDir: String = ""
+    var localDraftModel: String = ""
+    var localMmproj: String = ""
 
     // Based on the tokenizer templates bundled with these two Splash packages.
     // Qwen3.6 ignores effort intensity; Splash maps any non-none effort to thinking on.
@@ -49,10 +63,19 @@ struct SplashConfiguration: Codable, Equatable {
 
     var validationError: String? {
         let modelPattern = #"^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?/[A-Za-z0-9_](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9_])?$"#
-        // Match Splash 1.1's owner/repo[:variant] selection syntax.
+        let pathPattern = #"/[A-Za-z0-9._/-]+"#
+        // Match owner/repo[:variant], local paths (e.g. from Splash .resolved), or hash-based IDs
         let parts = model.split(separator: ":", omittingEmptySubsequences: false)
         let repository = String(parts[0])
-        if repository.range(of: modelPattern, options: .regularExpression) == nil || repository.contains("--") || repository.contains("..") || repository.hasSuffix(".git") {
+        let isPath = repository.hasPrefix("/")
+        let isLocalHash = repository.hasPrefix("local/")
+        if !isPath && !isLocalHash && repository.range(of: modelPattern, options: .regularExpression) == nil {
+            return "Model must be a valid owner/repo ID, local path, or Splash-registered model."
+        }
+        if isPath && repository.range(of: pathPattern, options: .regularExpression) == nil {
+            return "Model path must start with / and contain valid characters."
+        }
+        if !isPath && (repository.contains("--") || repository.contains("..") || repository.hasSuffix(".git")) {
             return "Model must be a full Hugging Face owner/repo ID."
         }
         if parts.count > 1 {

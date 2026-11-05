@@ -42,6 +42,11 @@ struct OverviewPage: View {
                                 .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             copyModelButton
                         }
+                        if let version = controller.serverVersion {
+                            Text("Server: \(version)")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
                     }
                     Spacer(minLength: 12)
                     StatusBadge(controller: controller)
