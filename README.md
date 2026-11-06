@@ -83,6 +83,8 @@ Inco's Splash for M1 and M2 Macs.
 - **Optional extras:** launch at login, and a light, dark or system appearance.
 - **Settings persist** across app restarts (stored in macOS UserDefaults).
 
+## Screenshots
+
 <img alt="Live hardware metrics sidebar: GPU, ANE, RAM usage and token speeds" src="screenshots/live-sidebar.png">
 
 <img alt="The Latest request panel: prompt and output tokens, time to first token, decode speed and derived timings" src="screenshots/latest-request.png">
