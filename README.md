@@ -10,10 +10,7 @@ Inco's Splash for M1 and M2 Macs.
 > affiliated with, or endorsed by the developers of Splash. It controls an existing
 > Splash installation and never installs, updates or modifies Splash itself.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="screenshots_v1.1.0/overview-dark.png">
-  <img alt="Splash Launcher's Overview: the loaded model, server status, memory and token activity" src="screenshots_v1.1.0/overview-light.png">
-</picture>
+<img alt="Splash Launcher's Overview: the loaded model, server status, memory and token activity" src="screenshots/overview-dark.png">
 
 ## Install
 
@@ -67,6 +64,9 @@ Inco's Splash for M1 and M2 Macs.
   - Draft model: leave blank for Splash to auto-download a compatible draft.
   - mmproj: only needed for GGUF models, not passed for MLX.
   - Prepared models appear in the Model & Connection picker.
+- **Live hardware metrics sidebar:**
+  - Real-time GPU % & temperature, ANE usage %, and RAM usage.
+  - Decode and Prefill tokens/sec (from Splash's `/status` API).
 - **Live overview:**
   - Readiness, memory use and limits, and context limit, as reported by Splash.
   - Token activity for the whole server session.
@@ -83,15 +83,17 @@ Inco's Splash for M1 and M2 Macs.
 - **Optional extras:** launch at login, and a light, dark or system appearance.
 - **Settings persist** across app restarts (stored in macOS UserDefaults).
 
-<img alt="The Latest request panel: prompt and output tokens, time to first token, decode speed and derived timings" src="screenshots_v1.1.0/latest-request.png">
+<img alt="Live hardware metrics sidebar: GPU, ANE, RAM usage and token speeds" src="screenshots/live-sidebar.png">
 
-<img alt="Settings: model and connection, server performance, and local model preparation" src="screenshots_v1.1.0/settings.png">
+<img alt="The Latest request panel: prompt and output tokens, time to first token, decode speed and derived timings" src="screenshots/latest-request.png">
 
-<img alt="Server settings: idle release, max cache disk, persistent cache, thinking token budget, request timeout" src="screenshots_v1.1.0/server-settings.png">
+<img alt="Settings: model and connection, server performance, and local model preparation" src="screenshots/settings.png">
 
-<img alt="Additional/Custom Flags panel with the available flags reference" src="screenshots_v1.1.0/additional-flags.png">
+<img alt="Server settings: idle release, max cache disk, persistent cache, thinking token budget, request timeout" src="screenshots/server-settings.png">
 
-<img alt="Local Model Preparation and Models and Cache panel" src="screenshots_v1.1.0/local-model-cache.png">
+<img alt="Additional/Custom Flags panel with the available flags reference" src="screenshots/additional-flags.png">
+
+<img alt="Local Model Preparation and Models and Cache panel" src="screenshots/local-model-cache.png">
 
 ## Requirements
 
