@@ -398,7 +398,9 @@ final class SplashProcessControllerTests: XCTestCase {
         controller.appendLog(Data("Fetching:  90%\rFetching: 100%\n15:00:00 Ready\n".utf8))
         controller.appendLog(Data("more output\n".utf8))
         // The last key.count - 1 characters stay held back until more output arrives (key redaction).
-        XCTAssertEqual(controller.logs, "Fetching: 100%\n15:00:00 Ready\nmore ou")
+        // Logs now start with the full command line prepended on start.
+        let commandPrefix = "splash-m1 serve --model incoai/Qwen3.8-27B-Splash --host 127.0.0.1 --port 8000\n"
+        XCTAssertEqual(controller.logs, commandPrefix + "Fetching: 100%\n15:00:00 Ready\nmore ou")
     }
 
     func testRequestLineSurvivesMultibyteSeparatorSplitAcrossReads() {
