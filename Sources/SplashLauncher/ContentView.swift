@@ -5,6 +5,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var controller: SplashProcessController
     @State private var page: LauncherPage = .overview
+    @StateObject private var systemLoad = SystemLoadSampler()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -15,7 +16,7 @@ struct ContentView: View {
                     .padding(.horizontal, 30)
                     .padding(.top, 30)
                     .padding(.bottom, 24)
-                    .frame(maxWidth: 1000, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 pageContent
             }
             .frame(maxWidth: .infinity)
@@ -23,6 +24,8 @@ struct ContentView: View {
         }
         .tint(SplashTheme.accent)
         .frame(minWidth: 850, minHeight: 650)
+        .onAppear { systemLoad.start() }
+        .onDisappear { systemLoad.stop() }
     }
 
     @ViewBuilder
@@ -36,8 +39,8 @@ struct ContentView: View {
             LogsPage(controller: controller)
                 .padding(.horizontal, 30)
                 .padding(.bottom, 30)
-                .frame(maxWidth: 1000, maxHeight: .infinity, alignment: .top)
-                .frame(maxWidth: .infinity)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -46,8 +49,7 @@ struct ContentView: View {
             page()
                 .padding(.horizontal, 30)
                 .padding(.bottom, 30)
-                .frame(maxWidth: 1000, alignment: .leading)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -133,6 +135,7 @@ struct ContentView: View {
                 }
             }
             Spacer()
+            SidebarMetrics(load: systemLoad.load, decode: controller.status?.metrics?.decodeTokensPerSecond, prefill: controller.status?.metrics?.prefillTokensPerSecond)
             VStack(alignment: .leading, spacing: 12) {
                 StatusBadge(controller: controller)
                 Text("Always within reach")
@@ -143,7 +146,7 @@ struct ContentView: View {
             .padding(.horizontal, 5)
         }
         .padding(20)
-        .frame(width: 196)
+        .frame(width: 220)
         .frame(maxHeight: .infinity)
         .background(SplashTheme.sidebar)
     }

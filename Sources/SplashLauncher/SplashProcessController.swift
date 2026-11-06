@@ -192,7 +192,8 @@ final class SplashProcessController: ObservableObject {
             outputPipe = pipe
             activeConfiguration = configuration
             activeAPIKey = key
-            logs = ""
+            let commandLine = (process.arguments ?? []).map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
+            logs = "\(process.executableURL?.lastPathComponent ?? "splash-m1") \(commandLine)\n"
             pendingLogText = ""
             partialLogLine = Data()
             lastRequest = nil
@@ -301,7 +302,7 @@ final class SplashProcessController: ObservableObject {
     /// Appends output the way a terminal shows it: a carriage return rewrites the current line,
     /// so progress bars (such as model downloads) update in place instead of piling up.
     /// A trailing carriage return is kept until the next output shows whether a newline follows.
-    static func appendingTerminalOutput(_ text: String, to log: String, limit: Int = 50_000) -> String {
+    static func appendingTerminalOutput(_ text: String, to log: String, limit: Int = 500_000) -> String {
         guard text.unicodeScalars.contains("\r") || log.hasSuffix("\r") else {
             return String((log + text).suffix(limit))
         }
